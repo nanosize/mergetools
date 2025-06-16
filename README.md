@@ -3,11 +3,13 @@
 ## Maya Style Merge Tool
 ![](https://i.imgur.com/EQ0rLzV.gif)
 
-Usage: Get mesh_merge_tool.zip from the latest [release](https://github.com/Stromberg90/Scripts/releases) install it and then in Edit mode use the new tool that appears in the left-side Toolbar.  You can right click on the tool icon to set a hotkey for switching to the tool.
+Usage: Get the `mesh_merge_tool.zip` from the latest [release](https://github.com/Stromberg90/Scripts/releases), install it, and then in Edit mode use the new tool that appears in the left-side Toolbar.  
+You can right click on the tool icon to set a hotkey for switching to the tool.
 
 ![](https://i.imgur.com/EuHTXth.png)
 
-You can also choose to hotkey mesh.merge_tool in the Blender Preferences > Keymap > 3D View > Mesh > Mesh (Global) if you wish to call the operator directly instead of using the tool (NOTE: It is recommended that if you choose to do this then you should enable the "Wait for Input" checkbox when setting up your hotkey.
+You can also choose to hotkey `mesh.merge_tool` in the Blender Preferences > Keymap > 3D View > Mesh > Mesh (Global) if you wish to temporarily invoke the operator directly for a single merge, instead of fully switching to the tool. 
+(NOTE: You can enable the "Wait for Input" checkbox in the hotkey to change whether the operator activates immediately or waits for mouse input. When used this way the operator currently requires a click to confirm the merge.)
 
 Click and hold the left mouse button on a vertex or edge and then drag it onto a second vertex or edge and release the mouse button to merge them.  You can control whether to merge at the first or last vertex/edge, or the center between the two, via a dropdown in the Tool Settings bar at the top of the 3D Viewport, OR you can press the 1, 2, 3, A, C, F, or L key while dragging to change the merge location on the fly before you release the mouse button.
 - 1, A, or F will merge at the First component.
