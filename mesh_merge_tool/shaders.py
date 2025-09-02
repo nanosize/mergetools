@@ -9,7 +9,7 @@ from .util import find_center
 
 # Blender versions higher than 4.0 don't support 3D_UNIFORM_COLOR but versions below 3.4 require it
 # Blender versions below 4.5 don't support POINT_UNIFORM_COLOR
-if bpy.app.version[0] == 5:
+if bpy.app.version[0] >= 5:
     line_type = 'POLYLINE_UNIFORM_COLOR'
     point_type = 'POINT_UNIFORM_COLOR'
 elif bpy.app.version[0] == 4:
@@ -31,39 +31,70 @@ try:
 except:
     # Assume Opengl for older versions
     backend = 'OPENGL'
-# Pray that Metal works with Opengl code
-if backend != 'VULKAN':
-    backend = 'OPENGL'
 
+# Dashed lines
+# gpu.types.GPUShader is deprecated on Vulkan in 4.5 and completely removed in 5.0
+if backend == 'VULKAN' or bpy.app.version[0] >= 5:
+    vert_out = gpu.types.GPUStageInterfaceInfo("my_interface")
+    vert_out.smooth('FLOAT', "v_ArcLength")
 
-vertex_shader = '''
-    uniform mat4 u_ViewProjectionMatrix;
+    shader_info = gpu.types.GPUShaderCreateInfo()
+    shader_info.push_constant('MAT4', "u_ViewProjectionMatrix")
+    shader_info.push_constant('FLOAT', "u_Scale")
+    shader_info.push_constant('VEC4', "u_Color")
+    shader_info.vertex_in(0, 'VEC3', "position")
+    shader_info.vertex_in(1, 'FLOAT', "arcLength")
+    shader_info.vertex_out(vert_out)
+    shader_info.fragment_out(0, 'VEC4', "FragColor")
 
-    in vec3 position;
-    in float arcLength;
+    shader_info.vertex_source(
+        "void main()"
+        "{"
+        "  v_ArcLength = arcLength;"
+        "  gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);"
+        "}"
+    )
 
-    out float v_ArcLength;
+    shader_info.fragment_source(
+        "void main()"
+        "{"
+        "  if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;"
+        "  FragColor = vec4(u_Color);"
+        "}"
+    )
 
-    void main()
-    {
-        v_ArcLength = arcLength;
-        gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);
-    }
-'''
+    shader_v = gpu.shader.create_from_info(shader_info)
+    del vert_out
+    del shader_info
+else:
+    vertex_shader = '''
+        uniform mat4 u_ViewProjectionMatrix;
 
-fragment_shader = '''
-    uniform float u_Scale;
-    uniform vec4 u_Color;
+        in vec3 position;
+        in float arcLength;
 
-    in float v_ArcLength;
-    out vec4 FragColor;
+        out float v_ArcLength;
 
-    void main()
-    {
-        if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;
-        FragColor = vec4(u_Color);
-    }
-'''
+        void main()
+        {
+            v_ArcLength = arcLength;
+            gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);
+        }
+    '''
+
+    fragment_shader = '''
+        uniform float u_Scale;
+        uniform vec4 u_Color;
+
+        in float v_ArcLength;
+        out vec4 FragColor;
+
+        void main()
+        {
+            if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;
+            FragColor = vec4(u_Color);
+        }
+    '''
 
 
 class DrawPoint():
@@ -190,7 +221,10 @@ def draw_callback_3d(self, context):
                 tool_line = DrawLine()
                 tool_line.add(shader_line, line_coords, self.prefs.line_width, self.prefs.line_color)
             else:
-                shader_dashed = gpu.types.GPUShader(vertex_shader, fragment_shader)
+                if backend == 'VULKAN' or bpy.app.version[0] >= 5:
+                    shader_dashed = shader_v
+                else:
+                    shader_dashed = gpu.types.GPUShader(vertex_shader, fragment_shader)
                 tool_line = DrawLineDashed()
                 tool_line.add(shader_dashed, line_coords, self.prefs.line_width, self.prefs.line_color)
 
@@ -213,11 +247,6 @@ def draw_callback_3d(self, context):
                 end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, self.prefs.start_color)
             else:
                 end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, self.prefs.end_color)
-#            if self.merge_location in ('FIRST', 'CENTER'):  # There has to be a better way of doing this.
-#                point_color = self.prefs.start_color
-#            else:
-#                point_color = self.prefs.end_color
-#            end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, point_color)
 
             # Middle point
             if self.merge_location == 'CENTER':
