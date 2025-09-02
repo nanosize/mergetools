@@ -106,8 +106,6 @@ class MergeToolPreferences(bpy.types.AddonPreferences):
         step=1,
         precision=2)
 
-    # TODO: Can we get colors from the user's active theme? E.G. how the Knife Tool does?
-    # Do we even want to? We'd want to select colors that have good contrast with the mesh, not the same colors as the mesh.
     start_color: FloatVectorProperty(name="Starting Color",
         default=(0.6, 0.0, 1.0, 1.0),
         size=4,
@@ -149,7 +147,6 @@ class MergeToolPreferences(bpy.types.AddonPreferences):
         nums.prop(self, "point_size")
         nums.prop(self, "edge_width")
         nums.prop(self, "line_width")
-#        nums.prop(self, "circ_radius")
 
         colors = layout.grid_flow(row_major=False, columns=0, even_columns=True, even_rows=False, align=False)
         colors.prop(self, "start_color")
@@ -249,8 +246,6 @@ class MergeTool(bpy.types.Operator):
 
         if event.alt or event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
             # Allow navigation when invoked from keybind instead of mouse
-            # TODO: Investigate github issue 41; someone requests a middle mouse option.
-            # TODO: It'd be nice if these keys could be user-defined, not hard-coded.
             return {'PASS_THROUGH'}
         elif event.type in {'ONE', 'A', 'F'} and event.value == 'PRESS':
             self.merge_location = 'FIRST'
@@ -263,10 +258,6 @@ class MergeTool(bpy.types.Operator):
                 self.m_coord = event.mouse_region_x, event.mouse_region_y
                 bpy.ops.view3d.select(extend=False, location=self.m_coord)
                 set_component(self, 'END')
-        # TODO: If people keybind the operator directly and don't have Wait for Input then they still need to
-        #       click to confirm the merge because it only follows this code path for LEFTMOUSE events.
-        #       It may be nice if we could let them define a key AND let it invoke upon key press and
-        #       execute this code path upon key release.
         elif event.type == 'LEFTMOUSE':
             main(self, context, event)
             if not self.started:
@@ -297,7 +288,6 @@ class MergeTool(bpy.types.Operator):
                         self.end_comp.select = True
                         self.bm.select_history.add(self.start_comp)
                         self.bm.select_history.add(self.end_comp)
-                        # TODO: Blender's uv "fixing" is too crude
                         bpy.ops.mesh.merge(type=self.merge_location, uvs=self.prefs.fix_uvs)
                     elif self.sel_mode == 'EDGE':
                         # Case of two fully separate edges
@@ -377,9 +367,6 @@ class MergeTool(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def invoke(self, context, event):
-    # TODO: You know, maybe we *could* support multi-select modes by detecting the TYPE of the active component rather than the selection mode.
-    # The only criteria would be that at least one actived mode is vert or edge. Though, if it's a face it could be unintuitive why it only seems to work "sometimes" when the cursor isn't in just the right place to grab a vert or edge.
-    # So really the first 3 logic tests would be exactly the same as below, and then when we got to the final Else check, that's where new logic would reside (because doing the existing logic first would let us short circuit needing extra checks).
         modes = context.tool_settings.mesh_select_mode
         if modes[0] and not modes[1] and not modes[2]:
             self.sel_mode = 'VERT'
@@ -393,10 +380,6 @@ class MergeTool(bpy.types.Operator):
             self.report({'WARNING'}, "Selection Mode must be Vertex or Edge only")
             return {'CANCELLED'}
 
-        # TODO: Wishlist: UV Editor support (would need an entirely separate tool + classes)
-        # BUG: There's an issue related to having multiple objects in edit mode where if object A is active and object B is inactive
-        #      then if you try to use the merge tool on object B then the first time it won't work. We need to check and set active
-        #      before doing anything else so that the tool will work the first time when object switching.
         if context.space_data.type == 'VIEW_3D':
             context.workspace.status_text_set("Left Click and drag to merge vertices or edges. Esc or Right Click to cancel. Modifier keys during drag: [1], [2], [3], [A], [C], [F], [L]")
 

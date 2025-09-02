@@ -8,19 +8,21 @@ from .util import find_center
 
 
 # Blender versions higher than 4.0 don't support 3D_UNIFORM_COLOR but versions below 3.4 require it
-if bpy.app.version[0] >= 4:
-    shader_type = 'UNIFORM_COLOR'
+# Blender versions below 4.5 don't support POINT_UNIFORM_COLOR
+if bpy.app.version[0] == 5:
+    line_type = 'POLYLINE_UNIFORM_COLOR'
+    point_type = 'POINT_UNIFORM_COLOR'
+elif bpy.app.version[0] == 4:
+    line_type = 'POLYLINE_UNIFORM_COLOR'
+    point_type = 'UNIFORM_COLOR'
+    if bpy.app.version[1] >= 5:
+        point_type = 'POINT_UNIFORM_COLOR'
 elif bpy.app.version[0] == 3 and bpy.app.version[1] >= 4:
-        shader_type = 'UNIFORM_COLOR'
+    line_type = 'POLYLINE_UNIFORM_COLOR'
+    point_type = 'UNIFORM_COLOR'
 else:
-    shader_type = '3D_UNIFORM_COLOR'
-
-# TODO: Must try/except a check of the GPU backend to retain compatibility with opengl while also supporting the new vulkan bakend
-# (I don't know how old the system.gpu_backend property is, so if it doesn't exist, then default to opengl)
-# I could literally just query this on the Merge Tool's oldest supported blender version
-# bpy.context.preferences.system.gpu_backend
-# Unsupported: 2.93, 3.4
-# Supported: 3.5
+    line_type = '3D_POLYLINE_UNIFORM_COLOR'
+    point_type = '3D_UNIFORM_COLOR'
 
 try:
     # gpu_backend was added in 3.5
@@ -29,7 +31,7 @@ try:
 except:
     # Assume Opengl for older versions
     backend = 'OPENGL'
-    print("gpu_backend not present")
+# Pray that Metal works with Opengl code
 if backend != 'VULKAN':
     backend = 'OPENGL'
 
@@ -76,6 +78,10 @@ class DrawPoint():
         batch = batch_for_shader(self.shader, 'POINTS', {"pos": self.coords})
         self.shader.bind()
         self.shader.uniform_float("color", self.color)
+        try:  # Needed for Vulkan. Only applicable to Blender >= 4.5
+            self.shader.uniform_float("size", self.size)
+        except:
+            pass
         batch.draw(self.shader)
 
     def add(self, shader, coords, size, color):
@@ -98,9 +104,12 @@ class DrawLine():
         self.color = None
 
     def draw(self):
+        region = bpy.context.region
         batch = batch_for_shader(self.shader, 'LINES', {"pos": self.coords})
         self.shader.bind()
+        self.shader.uniform_float("viewportSize", (region.width, region.height))
         self.shader.uniform_float("color", self.color)
+        self.shader.uniform_float("lineWidth", self.width)
         batch.draw(self.shader)
 
     def add(self, shader, coords, width, color):
@@ -142,8 +151,10 @@ class DrawLineDashed():
 
 def draw_callback_3d(self, context):
     if self.started and self.start_comp is not None:
+        gpu.state.blend_set("ALPHA")
         gpu.state.point_size_set(self.prefs.point_size)
-        shader = gpu.shader.from_builtin(shader_type)
+        shader_line = gpu.shader.from_builtin(line_type)
+        shader_point = gpu.shader.from_builtin(point_type)
         if self.end_comp is not None and self.end_comp != self.start_comp:
             gpu.state.line_width_set(self.prefs.line_width)
             if not self.multi_merge:
@@ -177,7 +188,7 @@ def draw_callback_3d(self, context):
             # Line that connects the start and end position (draw first so it's beneath the vertices)
             if not self.multi_merge:
                 tool_line = DrawLine()
-                tool_line.add(shader, line_coords, self.prefs.line_width, self.prefs.line_color)
+                tool_line.add(shader_line, line_coords, self.prefs.line_width, self.prefs.line_color)
             else:
                 shader_dashed = gpu.types.GPUShader(vertex_shader, fragment_shader)
                 tool_line = DrawLineDashed()
@@ -190,23 +201,23 @@ def draw_callback_3d(self, context):
 
                 end_edge = DrawLine()
                 if self.merge_location in ('FIRST', 'CENTER'):
-                    end_edge.add(shader, e1v, self.prefs.edge_width, self.prefs.start_color)
+                    end_edge.add(shader_line, e1v, self.prefs.edge_width, self.prefs.start_color)
                 else:
-                    end_edge.add(shader, e1v, self.prefs.edge_width, self.prefs.end_color)
+                    end_edge.add(shader_line, e1v, self.prefs.edge_width, self.prefs.end_color)
 
             # Ending point
             end_point = DrawPoint()
             if self.multi_merge:
-                end_point.add(shader, vert_coords, self.prefs.point_size, self.prefs.start_color)
+                end_point.add(shader_point, vert_coords, self.prefs.point_size, self.prefs.start_color)
             if self.merge_location in ('FIRST', 'CENTER'):
-                end_point.add(shader, self.end_comp_transformed, self.prefs.point_size, self.prefs.start_color)
+                end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, self.prefs.start_color)
             else:
-                end_point.add(shader, self.end_comp_transformed, self.prefs.point_size, self.prefs.end_color)
+                end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, self.prefs.end_color)
 #            if self.merge_location in ('FIRST', 'CENTER'):  # There has to be a better way of doing this.
 #                point_color = self.prefs.start_color
 #            else:
 #                point_color = self.prefs.end_color
-#            end_point.add(shader, self.end_comp_transformed, self.prefs.point_size, point_color)
+#            end_point.add(shader_point, self.end_comp_transformed, self.prefs.point_size, point_color)
 
             # Middle point
             if self.merge_location == 'CENTER':
@@ -220,7 +231,7 @@ def draw_callback_3d(self, context):
                             find_center([find_center(self.start_comp), find_center(self.end_comp)])
 
                 mid_point = DrawPoint()
-                mid_point.add(shader, midpoint, self.prefs.point_size, self.prefs.end_color)
+                mid_point.add(shader_point, midpoint, self.prefs.point_size, self.prefs.end_color)
 
         # Starting edge
         if self.sel_mode == 'EDGE':
@@ -229,19 +240,20 @@ def draw_callback_3d(self, context):
 
             start_edge = DrawLine()
             if self.merge_location == 'FIRST':
-                start_edge.add(shader, e0v, self.prefs.edge_width, self.prefs.end_color)
+                start_edge.add(shader_line, e0v, self.prefs.edge_width, self.prefs.end_color)
             else:
-                start_edge.add(shader, e0v, self.prefs.edge_width, self.prefs.start_color)
+                start_edge.add(shader_line, e0v, self.prefs.edge_width, self.prefs.start_color)
 
         # Starting point
         start_point = DrawPoint()
         if self.merge_location == 'FIRST':
-            start_point.add(shader, self.start_comp_transformed, self.prefs.point_size, self.prefs.end_color)
+            start_point.add(shader_point, self.start_comp_transformed, self.prefs.point_size, self.prefs.end_color)
         else:
-            start_point.add(shader, self.start_comp_transformed, self.prefs.point_size, self.prefs.start_color)
+            start_point.add(shader_point, self.start_comp_transformed, self.prefs.point_size, self.prefs.start_color)
 
         gpu.state.line_width_set(1.0)
         gpu.state.point_size_set(1.0)
+        gpu.state.blend_set('NONE')
 
 
 def draw_callback_2d(self, context):
