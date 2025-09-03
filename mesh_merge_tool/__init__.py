@@ -20,7 +20,7 @@ bl_info = {
     "name": "Merge Tool",
     "description": "An interactive tool for merging vertices and edges.",
     "author": "Andreas Strømberg, Chris Kohl",
-    "version": (1, 4, 0),
+    "version": (1, 5, 0),
     "blender": (2, 93, 0),
     "location": "View3D > TOOLS > Merge Tool",
     "warning": "",
@@ -31,12 +31,17 @@ bl_info = {
 
 
 import bpy
-import gpu
 import bmesh
 import os
 from mathutils import Vector
-from gpu_extras.presets import draw_circle_2d
-from gpu_extras.batch import batch_for_shader
+
+from importlib import reload
+if 'shaders' in globals():
+    reload(shaders)
+
+from .shaders import draw_callback_3d, draw_callback_2d
+from .util import find_center, set_component
+
 from bpy.props import (
     EnumProperty,
     StringProperty,
@@ -49,13 +54,6 @@ from bpy.props import (
 icon_dir = os.path.join(os.path.dirname(__file__), "icons")
 t_cursor = 'PAINT_CROSS'
 
-# Blender versions higher than 4.0 don't support 3D_UNIFORM_COLOR but versions below 3.4 require it
-if bpy.app.version[0] >= 4:
-    shader_type = 'UNIFORM_COLOR'
-elif bpy.app.version[0] == 3 and bpy.app.version[1] >= 4:
-        shader_type = 'UNIFORM_COLOR'
-else:
-    shader_type = '3D_UNIFORM_COLOR'
 
 classes = []
 
@@ -104,7 +102,7 @@ class MergeToolPreferences(bpy.types.AddonPreferences):
         description="Size of the circle cursor (VISUAL ONLY)",
         default=12.0,
         min=6.0,
-        max=100,
+        max=100.0,
         step=1,
         precision=2)
 
@@ -156,247 +154,6 @@ class MergeToolPreferences(bpy.types.AddonPreferences):
         colors.prop(self, "line_color")
         colors.prop(self, "circ_color")
 classes.append(MergeToolPreferences)
-
-
-vertex_shader = '''
-    uniform mat4 u_ViewProjectionMatrix;
-
-    in vec3 position;
-    in float arcLength;
-
-    out float v_ArcLength;
-
-    void main()
-    {
-        v_ArcLength = arcLength;
-        gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);
-    }
-'''
-
-fragment_shader = '''
-    uniform float u_Scale;
-    uniform vec4 u_Color;
-
-    in float v_ArcLength;
-    out vec4 FragColor;
-
-    void main()
-    {
-        if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;
-        FragColor = vec4(u_Color);
-    }
-'''
-
-
-class DrawPoint():
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.shader = None
-        self.coords = None
-        self.color = None
-
-    def draw(self):
-        batch = batch_for_shader(self.shader, 'POINTS', {"pos": self.coords})
-        self.shader.bind()
-        self.shader.uniform_float("color", self.color)
-        batch.draw(self.shader)
-
-    def add(self, shader, coords, color):
-        self.shader = shader
-        if isinstance(coords, Vector):
-            self.coords = [coords]
-        else:
-            self.coords = coords
-        self.color = color
-        self.draw()
-
-
-class DrawLine():
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.shader = None
-        self.coords = None
-        self.color = None
-
-    def draw(self):
-        batch = batch_for_shader(self.shader, 'LINES', {"pos": self.coords})
-        self.shader.bind()
-        self.shader.uniform_float("color", self.color)
-        batch.draw(self.shader)
-
-    def add(self, shader, coords, color):
-        self.shader = shader
-        self.coords = coords
-        self.color = color
-        self.draw()
-
-
-class DrawLineDashed():
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.shader = None
-        self.coords = None
-        self.color = None
-        self.arc_lengths = None
-
-    def draw(self):
-        batch = batch_for_shader(self.shader, 'LINES', {"position": self.coords, "arcLength": self.arc_lengths})
-        self.shader.bind()
-        matrix = bpy.context.region_data.perspective_matrix
-        self.shader.uniform_float("u_ViewProjectionMatrix", matrix)
-        self.shader.uniform_float("u_Scale", 50)
-        self.shader.uniform_float("u_Color", self.color)
-        batch.draw(self.shader)
-
-    def add(self, shader, coords, color):
-        self.shader = shader
-        self.coords = coords
-        self.color = color
-        self.arc_lengths = [0]
-        for a, b in zip(self.coords[:-1], self.coords[1:]):
-            self.arc_lengths.append(self.arc_lengths[-1] + (a - b).length)
-        self.draw()
-
-
-def draw_callback_3d(self, context):
-    if self.started and self.start_comp is not None:
-        gpu.state.point_size_set(self.prefs.point_size)
-        shader = gpu.shader.from_builtin(shader_type)
-        if self.end_comp is not None and self.end_comp != self.start_comp:
-            gpu.state.line_width_set(self.prefs.line_width)
-            if not self.multi_merge:
-                line_coords = [self.start_comp_transformed, self.end_comp_transformed]
-            else:
-                line_coords = []
-                vert_coords = []
-                if self.merge_location == 'CENTER':
-                    vert_list = [v.co for v in self.start_sel]
-                    if self.end_comp not in self.start_sel:
-                        vert_list.append(self.end_comp.co)
-                    for v in self.start_sel:
-                        line_coords.append(self.world_matrix @ v.co)
-                        line_coords.append(self.world_matrix @ find_center(vert_list))
-                        vert_coords.append(self.world_matrix @ v.co)
-                    line_coords.append(self.end_comp_transformed)
-                    line_coords.append(self.world_matrix @ find_center(vert_list))
-                elif self.merge_location == 'LAST':
-                    for v in self.start_sel:
-                        line_coords.append(self.world_matrix @ v.co)
-                        line_coords.append(self.end_comp_transformed)
-                        vert_coords.append(self.world_matrix @ v.co)
-                elif self.merge_location == 'FIRST':
-                    for v in self.start_sel:
-                        line_coords.append(self.world_matrix @ v.co)
-                        line_coords.append(self.start_comp_transformed)
-                        vert_coords.append(self.world_matrix @ v.co)
-                    line_coords.append(self.end_comp_transformed)
-                    line_coords.append(self.start_comp_transformed)
-
-            # Line that connects the start and end position (draw first so it's beneath the vertices)
-            if not self.multi_merge:
-                tool_line = DrawLine()
-                tool_line.add(shader, line_coords, self.prefs.line_color)
-            else:
-                shader_dashed = gpu.types.GPUShader(vertex_shader, fragment_shader)
-                tool_line = DrawLineDashed()
-                tool_line.add(shader_dashed, line_coords, self.prefs.line_color)
-
-            # Ending edge
-            if self.sel_mode == 'EDGE':
-                gpu.state.line_width_set(self.prefs.edge_width)
-                e1v = [self.world_matrix @ v.co for v in self.end_comp.verts]
-
-                end_edge = DrawLine()
-                if self.merge_location in ('FIRST', 'CENTER'):
-                    end_edge.add(shader, e1v, self.prefs.start_color)
-                else:
-                    end_edge.add(shader, e1v, self.prefs.end_color)
-
-            # Ending point
-            end_point = DrawPoint()
-            if self.multi_merge:
-                end_point.add(shader, vert_coords, self.prefs.start_color)
-            if self.merge_location in ('FIRST', 'CENTER'):
-                end_point.add(shader, self.end_comp_transformed, self.prefs.start_color)
-            else:
-                end_point.add(shader, self.end_comp_transformed, self.prefs.end_color)
-
-            # Middle point
-            if self.merge_location == 'CENTER':
-                if self.sel_mode == 'VERT':
-                    if self.multi_merge:
-                        midpoint = self.world_matrix @ find_center(vert_list)
-                    else:
-                        midpoint = self.world_matrix @ find_center([self.start_comp, self.end_comp])
-                elif self.sel_mode == 'EDGE':
-                    midpoint = self.world_matrix @ \
-                            find_center([find_center(self.start_comp), find_center(self.end_comp)])
-
-                mid_point = DrawPoint()
-                mid_point.add(shader, midpoint, self.prefs.end_color)
-
-        # Starting edge
-        if self.sel_mode == 'EDGE':
-            gpu.state.line_width_set(self.prefs.edge_width)
-            e0v = [self.world_matrix @ v.co for v in self.start_comp.verts]
-
-            start_edge = DrawLine()
-            if self.merge_location == 'FIRST':
-                start_edge.add(shader, e0v, self.prefs.end_color)
-            else:
-                start_edge.add(shader, e0v, self.prefs.start_color)
-
-        # Starting point
-        start_point = DrawPoint()
-        if self.merge_location == 'FIRST':
-            start_point.add(shader, self.start_comp_transformed, self.prefs.end_color)
-        else:
-            start_point.add(shader, self.start_comp_transformed, self.prefs.start_color)
-
-        gpu.state.line_width_set(1)
-        gpu.state.point_size_set(1)
-
-
-def draw_callback_2d(self, context):
-    # Have to add 1 for some reason in order to get proper number of segments.
-    # This could potentially also be a ratio with the radius.
-    circ_segments = 8 + 1
-    draw_circle_2d(self.m_coord, self.prefs.circ_color, self.prefs.circ_radius, segments=circ_segments)
-
-
-def find_center(source):
-    """Assumes that the input is an Edge or an ordered object holding vertices or Vectors"""
-    coords = []
-    if isinstance(source, bmesh.types.BMEdge):
-        coords = [source.verts[0].co, source.verts[1].co]
-    elif isinstance(source[0], bmesh.types.BMVert):
-        coords = [v.co for v in source]
-    elif isinstance(source[0], Vector):
-        coords = [v for v in source]
-
-    offset = Vector((0.0, 0.0, 0.0))
-    for v in coords:
-        offset = offset + v
-    return offset / len(coords)
-
-
-def set_component(self, mode):
-    selected_comp = None
-    selected_comp = self.bm.select_history.active
-
-    if selected_comp:
-        if mode == 'START':
-            self.start_comp = selected_comp  # Set the start component
-            if self.sel_mode == 'VERT':
-                self.start_comp_transformed = self.world_matrix @ self.start_comp.co
-            elif self.sel_mode == 'EDGE':
-                self.start_comp_transformed = self.world_matrix @ find_center(self.start_comp)
-        if mode == 'END':
-            self.end_comp = selected_comp  # Set the end component
-            if self.sel_mode == 'VERT':
-                self.end_comp_transformed = self.world_matrix @ self.end_comp.co
-            elif self.sel_mode == 'EDGE':
-                self.end_comp_transformed = self.world_matrix @ find_center(self.end_comp)
 
 
 def main(self, context, event):
@@ -535,6 +292,8 @@ class MergeTool(bpy.types.Operator):
                     elif self.sel_mode == 'EDGE':
                         # Case of two fully separate edges
                         if not any([v for v in self.start_comp.verts if v in self.end_comp.verts]):
+                        # Bridge is a hack to let Blender deal with deciding
+                        # which vertices connect to each other so we don't have to
                             bridge = bmesh.ops.bridge_loops(self.bm, edges=(self.start_comp, self.end_comp))
                             new_e0 = bridge['edges'][0]
                             new_e1 = bridge['edges'][1]
@@ -628,6 +387,7 @@ class MergeTool(bpy.types.Operator):
             self.world_matrix = bpy.context.object.matrix_world
             self.bm = bmesh.from_edit_mesh(self.me)
 
+            # Get starting selection, if any.
             if self.sel_mode == 'VERT' and context.object.data.total_vert_sel > 1:
                 self.start_sel = [v for v in self.bm.verts if v.select]
             elif self.sel_mode == 'EDGE' and context.object.data.total_edge_sel > 1:
@@ -682,6 +442,8 @@ class WorkSpaceMergeTool(bpy.types.WorkSpaceTool):
     bl_cursor = t_cursor
     bl_widget = None
     bl_keymap = (
+        ("mesh.merge_tool", {"ctrl": 1, "type": 'LEFTMOUSE', "value": 'PRESS'},
+        {"properties": [("merge_location", 'CENTER')]}),
         ("mesh.merge_tool", {"type": 'LEFTMOUSE', "value": 'PRESS'},
         {"properties": [("wait_for_input", False)]}),
     )
