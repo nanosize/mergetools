@@ -19,12 +19,12 @@
 bl_info = {
     "name": "Merge Tool",
     "description": "An interactive tool for merging vertices and edges.",
-    "author": "Andreas Strømberg, Chris Kohl",
+    "author": "Andreas Strømberg, Chris Kohl, nanosize",
     "version": (1, 5, 0),
-    "blender": (2, 93, 0),
-    "location": "View3D > TOOLS > Merge Tool",
+    "blender": (5, 0, 0),
+    "location": "3D Viewport > Toolbar > Merge Tool",
     "warning": "",
-    "wiki_url": "https://github.com/Stromberg90/Scripts/tree/master/Blender",
+    "doc_url": "https://github.com/Stromberg90/Scripts/tree/master/Blender",
     "tracker_url": "https://github.com/Stromberg90/Scripts/issues",
     "category": "Mesh"
 }
@@ -192,7 +192,7 @@ class MergeTool(bpy.types.Operator):
     )
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.prefs = bpy.context.preferences.addons[__name__].preferences
         self.window = bpy.context.window_manager.windows[0]
         self.m_coord = None

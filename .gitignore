@@ -1,2 +1,3 @@
 */.mypy_cache/*
 */.ruff_cache/*
+mesh_merge_tool/__pycache__/

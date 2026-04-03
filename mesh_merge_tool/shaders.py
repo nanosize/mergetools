@@ -34,39 +34,48 @@ except:
 
 # Dashed lines
 # gpu.types.GPUShader is deprecated on Vulkan in 4.5 and completely removed in 5.0
-if backend == 'VULKAN' or bpy.app.version[0] >= 5:
-    vert_out = gpu.types.GPUStageInterfaceInfo("my_interface")
-    vert_out.smooth('FLOAT', "v_ArcLength")
+shader_v = None
 
-    shader_info = gpu.types.GPUShaderCreateInfo()
-    shader_info.push_constant('MAT4', "u_ViewProjectionMatrix")
-    shader_info.push_constant('FLOAT', "u_Scale")
-    shader_info.push_constant('VEC4', "u_Color")
-    shader_info.vertex_in(0, 'VEC3', "position")
-    shader_info.vertex_in(1, 'FLOAT', "arcLength")
-    shader_info.vertex_out(vert_out)
-    shader_info.fragment_out(0, 'VEC4', "FragColor")
 
-    shader_info.vertex_source(
-        "void main()"
-        "{"
-        "  v_ArcLength = arcLength;"
-        "  gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);"
-        "}"
-    )
+def get_shader_v():
+    global shader_v
 
-    shader_info.fragment_source(
-        "void main()"
-        "{"
-        "  if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;"
-        "  FragColor = vec4(u_Color);"
-        "}"
-    )
+    if shader_v is None:
+        vert_out = gpu.types.GPUStageInterfaceInfo("my_interface")
+        vert_out.smooth('FLOAT', "v_ArcLength")
 
-    shader_v = gpu.shader.create_from_info(shader_info)
-    del vert_out
-    del shader_info
-else:
+        shader_info = gpu.types.GPUShaderCreateInfo()
+        shader_info.push_constant('MAT4', "u_ViewProjectionMatrix")
+        shader_info.push_constant('FLOAT', "u_Scale")
+        shader_info.push_constant('VEC4', "u_Color")
+        shader_info.vertex_in(0, 'VEC3', "position")
+        shader_info.vertex_in(1, 'FLOAT', "arcLength")
+        shader_info.vertex_out(vert_out)
+        shader_info.fragment_out(0, 'VEC4', "FragColor")
+
+        shader_info.vertex_source(
+            "void main()"
+            "{"
+            "  v_ArcLength = arcLength;"
+            "  gl_Position = u_ViewProjectionMatrix * vec4(position, 1.0f);"
+            "}"
+        )
+
+        shader_info.fragment_source(
+            "void main()"
+            "{"
+            "  if (step(sin(v_ArcLength * u_Scale), 0.5) == 1) discard;"
+            "  FragColor = vec4(u_Color);"
+            "}"
+        )
+
+        shader_v = gpu.shader.create_from_info(shader_info)
+        del vert_out
+        del shader_info
+
+    return shader_v
+
+if backend != 'VULKAN' and bpy.app.version[0] < 5:
     vertex_shader = '''
         uniform mat4 u_ViewProjectionMatrix;
 
@@ -222,7 +231,7 @@ def draw_callback_3d(self, context):
                 tool_line.add(shader_line, line_coords, self.prefs.line_width, self.prefs.line_color)
             else:
                 if backend == 'VULKAN' or bpy.app.version[0] >= 5:
-                    shader_dashed = shader_v
+                    shader_dashed = get_shader_v()
                 else:
                     shader_dashed = gpu.types.GPUShader(vertex_shader, fragment_shader)
                 tool_line = DrawLineDashed()
