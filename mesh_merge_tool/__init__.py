@@ -191,10 +191,9 @@ class MergeTool(bpy.types.Operator):
         default = False
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__()
+    def initialize_runtime_state(self, context):
         self.prefs = bpy.context.preferences.addons[__name__].preferences
-        self.window = bpy.context.window_manager.windows[0]
+        self.window = context.window
         self.m_coord = None
         self.sel_mode = None
         self.start_sel = None
@@ -216,7 +215,8 @@ class MergeTool(bpy.types.Operator):
     def finish(self, context):
         self.remove_handles(context)
         context.workspace.status_text_set(None)
-        self.window.cursor_modal_restore()
+        if getattr(self, "window", None) is not None:
+            self.window.cursor_modal_restore()
         self.m_coord = None
         self.sel_mode = None
         self.start_sel = None
@@ -367,6 +367,7 @@ class MergeTool(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def invoke(self, context, event):
+        self.initialize_runtime_state(context)
         modes = context.tool_settings.mesh_select_mode
         if modes[0] and not modes[1] and not modes[2]:
             self.sel_mode = 'VERT'
